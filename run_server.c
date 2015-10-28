@@ -42,4 +42,5 @@ int main(void) {
 
 error:
     server_destroy(s);
+    return 1;
 }
