@@ -37,7 +37,6 @@ int main(void) {
         }
     }
     server_stop(s);
-
     server_destroy(s);
     return 0;
 

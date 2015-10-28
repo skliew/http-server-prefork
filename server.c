@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <string.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -19,6 +20,7 @@
 #endif
 
 static pid_t child_new(server* s);
+static int quit = 0;
 
 static int parse_request(int sockfd) {
     int i;
@@ -32,6 +34,11 @@ static int parse_request(int sockfd) {
     while (1) {
         while ((rret = read(sockfd, buf+buflen, sizeof(buf) - buflen)) == -1
             && errno == EINTR);
+
+        if (quit) {
+            goto end;
+        }
+
         if (rret < 0) {
             perror("read");
             result = -1;
@@ -64,19 +71,25 @@ static int parse_request(int sockfd) {
         }
     }
 
-
     printf("request is %d bytes long\n", pret);
     printf("method is %.*s\n", (int)method_len, method);
     printf("path is %.*s\n", (int)path_len, path);
     printf("HTTP version is 1.%d\n", minor_version);
     printf("headers:\n");
-    printf("PID: %d", getpid());
+    printf("PID: %d\n", getpid());
     for (i = 0; i != num_headers; ++i) {
         printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,
             (int)headers[i].value_len, headers[i].value);
     }
 end:
     return result;
+}
+
+static void sig_handler(int signo) {
+    fprintf(stderr, "Received signal %s in child %d\n", strsignal(signo), getpid());
+    if (signo == SIGINT) {
+        quit = 1;
+    }
 }
 
 static int child_run(server* s) {
@@ -86,7 +99,15 @@ static int child_run(server* s) {
     int w_size;
     char * dummy_out = "<html><body><h1>OK</h1></body></html>";
 
+    if (signal(SIGINT, sig_handler) < 0) {
+        perror("signal");
+        /* Do what? */
+    }
+
     for(;;) {
+        if (quit) {
+            return 0;
+        }
         if ((newsockfd = accept(s->sockfd, &addr, &addr_len)) < 0) {
             perror("accept");
             continue;
@@ -108,7 +129,7 @@ static pid_t child_new(server* s) {
     if (pid == 0) {
         /* child */
         child_run(s);
-        return 0;
+        exit(0);
     } else if (pid < 0 ) {
         /* error */
         return pid;
@@ -170,12 +191,24 @@ int server_start(server* s) {
 
 int server_stop(server* s) {
     int i;
+    int n_children = s->n_children;
+    int status;
     for (i = 0; i < s->n_children; i++) {
         debug("Killing PID %d\n", s->pids[i]);
         int ret = kill(s->pids[i], SIGTERM);
         if (ret < 0)
             perror("kill");
     }
+
+    while (n_children) {
+        pid_t res = wait(&status);
+        if (res < 0) {
+            perror("wait");
+            continue;
+        }
+        n_children--;
+    }
+
     return 0;
 }
 
