@@ -4,11 +4,13 @@
 #include <netinet/in.h>
 #include <stdio.h>
 #include <signal.h>
+#include <errno.h>
 
 #include "server.h"
+#include "picohttpparser/picohttpparser.h"
 
 #define BACKLOG 20
-#define DEBUG 0
+#define DEBUG 1
 
 #if DEBUG
 #define debug(...) fprintf(stderr, __VA_ARGS__) 
@@ -18,31 +20,85 @@
 
 static pid_t child_new(server* s);
 
+static int parse_request(int sockfd) {
+    int i;
+    int result = 0;
+    char buf[4096], *method, *path;
+    int pret, minor_version;
+    struct phr_header headers[100];
+    size_t buflen = 0, prevbuflen = 0, method_len, path_len, num_headers;
+    ssize_t rret;
+
+    while (1) {
+        while ((rret = read(sockfd, buf+buflen, sizeof(buf) - buflen)) == -1
+            && errno == EINTR);
+        if (rret < 0) {
+            perror("read");
+            result = -1;
+            goto end;
+        }
+
+        if (rret == 0) {
+            /* EOF? */
+            result = -1;
+            goto end;
+        }
+
+        prevbuflen = buflen;
+        buflen += rret;
+        /* parse the request */
+        num_headers = sizeof(headers) / sizeof(headers[0]);
+        pret = phr_parse_request(buf, buflen, (const char **)&method, &method_len, (const char**)&path, &path_len,
+            &minor_version, headers, &num_headers, prevbuflen);
+        if (pret > 0)
+            break; /* successfully parsed the request */
+        else if (pret == -1) {
+            result = -1;
+            goto end;
+        }
+        /* request is incomplete, continue the loop */
+        /*assert(pret == -2);*/
+        if (buflen == sizeof(buf)) {
+            result = -1;
+            goto end;
+        }
+    }
+
+
+    printf("request is %d bytes long\n", pret);
+    printf("method is %.*s\n", (int)method_len, method);
+    printf("path is %.*s\n", (int)path_len, path);
+    printf("HTTP version is 1.%d\n", minor_version);
+    printf("headers:\n");
+    printf("PID: %d", getpid());
+    for (i = 0; i != num_headers; ++i) {
+        printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,
+            (int)headers[i].value_len, headers[i].value);
+    }
+end:
+    return result;
+}
+
 static int child_run(server* s) {
     struct sockaddr addr;
     socklen_t addr_len = sizeof(addr);
     int newsockfd;
-    int buffer[256];
-    int r_size, w_size;
+    int w_size;
+    char * dummy_out = "<html><body><h1>OK</h1></body></html>";
 
     for(;;) {
         if ((newsockfd = accept(s->sockfd, &addr, &addr_len)) < 0) {
             perror("accept");
             continue;
         }
+        parse_request(newsockfd);
 
-        /* TODO Parse http */
-        do {
-            r_size = read(newsockfd, buffer, 256);
-            if (r_size < 0) {
-                perror("read");
-                break;
-            }
-            w_size = write(newsockfd, "OK\n", 3);
-            if (w_size < 0) {
-                perror("write");
-            }
-        } while (r_size != 0);
+        /* DUMMY data */
+        w_size = write(newsockfd, dummy_out, strlen(dummy_out));
+        if (w_size < 0)
+            perror("write");
+
+        close(newsockfd);
     }
     return 0;
 }
@@ -125,6 +181,9 @@ int server_stop(server* s) {
 
 int server_destroy(server* s) {
     close(s->sockfd);
+    if (s->pids)
+        free(s->pids);
     free(s);
     return 0;
 }
+
