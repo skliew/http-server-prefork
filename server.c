@@ -13,11 +13,18 @@
 
 #define BACKLOG 20
 #define DEBUG 1
+#define DEBUG_HTTP 0
 
 #if DEBUG
-#define debug(...) fprintf(stderr, __VA_ARGS__) 
+#define debug(...) fprintf(stdout, __VA_ARGS__)
 #else
 #define debug(...)
+#endif
+
+#if DEBUG_HTTP
+#define debug_http(...) fprintf(stdout, __VA_ARGS__)
+#else
+#define debug_http(...)
 #endif
 
 static pid_t child_new(server* s);
@@ -75,12 +82,12 @@ static int parse_request(int sockfd) {
         }
     }
 
-    printf("request is %d bytes long\n", pret);
-    printf("method is %.*s\n", (int)method_len, method);
-    printf("path is %.*s\n", (int)path_len, path);
-    printf("HTTP version is 1.%d\n", minor_version);
-    printf("headers:\n");
-    printf("PID: %d\n", getpid());
+    debug_http("request is %d bytes long\n", pret);
+    debug_http("method is %.*s\n", (int)method_len, method);
+    debug_http("path is %.*s\n", (int)path_len, path);
+    debug_http("HTTP version is 1.%d\n", minor_version);
+    debug_http("headers:\n");
+    debug_http("PID: %d\n", getpid());
     for (i = 0; i != num_headers; ++i) {
         int ret;
         char *key, *value;
@@ -105,7 +112,6 @@ static int parse_request(int sockfd) {
             continue;
         }
         kh_value(h, k) = value;
-        printf("Putting %s : %s\n", key, value);
         /*printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,*/
         /*(int)headers[i].value_len, headers[i].value);*/
     }
@@ -114,7 +120,7 @@ static int parse_request(int sockfd) {
         kh_foreach(h, key, value, {
             free((void*)key);
             free((void*)value);
-            printf("%s:%s\n", key, value);\
+            debug_http("%s:%s\n", key, value);\
         });
         kh_destroy(env, h);
     }
