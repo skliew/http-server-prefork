@@ -14,6 +14,7 @@
 #define BACKLOG 20
 #define DEBUG 1
 #define DEBUG_HTTP 0
+#define DEBUG_SYSCALL 0
 
 #if DEBUG
 #define debug(...) fprintf(stdout, __VA_ARGS__)
@@ -25,6 +26,12 @@
 #define debug_http(...) fprintf(stdout, __VA_ARGS__)
 #else
 #define debug_http(...)
+#endif
+
+#if DEBUG_SYSCALL
+#define debug_syscall(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define debug_syscall(...)
 #endif
 
 static pid_t child_new(server* s);
@@ -43,8 +50,10 @@ static int parse_request(int sockfd) {
     khash_t(env) *h = kh_init(env);
 
     while (1) {
+        debug_syscall("read\n");
         while ((rret = read(sockfd, buf+buflen, sizeof(buf) - buflen)) == -1
             && errno == EINTR);
+        debug_syscall("read done\n");
 
         if (quit) {
             goto end;
@@ -130,7 +139,8 @@ end:
 
 static void sig_handler(int signo) {
     fprintf(stderr, "Received signal %s in child %d\n", strsignal(signo), getpid());
-    if (signo == SIGINT || signo == SIGTERM) {
+    if (signo == SIGINT) {
+    } else if (signo == SIGTERM) {
         quit = 1;
     }
 }
@@ -143,7 +153,12 @@ static int child_run(server* s) {
     struct sigaction action;
     char * dummy_out = "<html><body><h1>OK</h1></body></html>";
 
+    memset(&action, 0, sizeof(action));
     action.sa_handler = sig_handler;
+    if (sigaction(SIGTERM, &action, NULL) < 0) {
+        perror("signal");
+        /* Do what? */
+    }
     if (sigaction(SIGINT, &action, NULL) < 0) {
         perror("signal");
         /* Do what? */
@@ -153,14 +168,18 @@ static int child_run(server* s) {
         if (quit) {
             return 0;
         }
+        debug_syscall("accept\n");
         if ((newsockfd = accept(s->sockfd, &addr, &addr_len)) < 0) {
             perror("accept");
             continue;
         }
+        debug_syscall("accept done\n");
         parse_request(newsockfd);
 
         /* DUMMY data */
+        debug_syscall("write\n");
         w_size = write(newsockfd, dummy_out, strlen(dummy_out));
+        debug_syscall("write done\n");
         if (w_size < 0)
             perror("write");
 
@@ -257,7 +276,7 @@ int server_stop(server* s) {
         }
         debug("Killing PID %d\n", s->pids[i]);
         n_children++;
-        int ret = kill(s->pids[i], SIGINT);
+        int ret = kill(s->pids[i], SIGTERM);
         if (ret < 0)
             perror("kill");
     }
