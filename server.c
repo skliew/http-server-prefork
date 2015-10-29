@@ -9,6 +9,7 @@
 
 #include "server.h"
 #include "picohttpparser/picohttpparser.h"
+#include "khash.h"
 
 #define BACKLOG 20
 #define DEBUG 1
@@ -22,6 +23,8 @@
 static pid_t child_new(server* s);
 static int quit = 0;
 
+KHASH_MAP_INIT_STR(env, char*)
+
 static int parse_request(int sockfd) {
     int i;
     int result = 0;
@@ -30,6 +33,7 @@ static int parse_request(int sockfd) {
     struct phr_header headers[100];
     size_t buflen = 0, prevbuflen = 0, method_len, path_len, num_headers;
     ssize_t rret;
+    khash_t(env) *h = kh_init(env);
 
     while (1) {
         while ((rret = read(sockfd, buf+buflen, sizeof(buf) - buflen)) == -1
@@ -78,8 +82,41 @@ static int parse_request(int sockfd) {
     printf("headers:\n");
     printf("PID: %d\n", getpid());
     for (i = 0; i != num_headers; ++i) {
-        printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,
-            (int)headers[i].value_len, headers[i].value);
+        int ret;
+        char *key, *value;
+        khint_t k;
+        key = (char*)malloc(headers[i].name_len + 1);
+        value = (char*)malloc(headers[i].value_len + 1);
+        if (NULL == key || NULL == value) {
+            if (key) {
+                free(key);
+            }
+            if (value) {
+                free(value);
+            }
+            continue;
+        }
+        strncpy(key, headers[i].name, headers[i].name_len);
+        strncpy(value, headers[i].value, headers[i].value_len);
+        k = kh_put(env, h, key, &ret);
+        if (ret < 0) {
+            free(key);
+            free(value);
+            continue;
+        }
+        kh_value(h, k) = value;
+        printf("Putting %s : %s\n", key, value);
+        /*printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,*/
+        /*(int)headers[i].value_len, headers[i].value);*/
+    }
+    {
+        const char *key, *value;
+        kh_foreach(h, key, value, {
+            free((void*)key);
+            free((void*)value);
+            printf("%s:%s\n", key, value);\
+        });
+        kh_destroy(env, h);
     }
 end:
     return result;
