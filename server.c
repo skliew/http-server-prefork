@@ -124,7 +124,7 @@ end:
 
 static void sig_handler(int signo) {
     fprintf(stderr, "Received signal %s in child %d\n", strsignal(signo), getpid());
-    if (signo == SIGINT) {
+    if (signo == SIGINT || signo == SIGTERM) {
         quit = 1;
     }
 }
@@ -134,9 +134,11 @@ static int child_run(server* s) {
     socklen_t addr_len = sizeof(addr);
     int newsockfd;
     int w_size;
+    struct sigaction action;
     char * dummy_out = "<html><body><h1>OK</h1></body></html>";
 
-    if (signal(SIGINT, sig_handler) < 0) {
+    action.sa_handler = sig_handler;
+    if (sigaction(SIGINT, &action, NULL) < 0) {
         perror("signal");
         /* Do what? */
     }
@@ -166,6 +168,7 @@ static pid_t child_new(server* s) {
     if (pid == 0) {
         /* child */
         child_run(s);
+        server_destroy(s);
         exit(0);
     } else if (pid < 0 ) {
         /* error */
@@ -179,23 +182,34 @@ static pid_t child_new(server* s) {
 server* server_new(int portno, int n_children) {
     server* s = (server*)malloc(sizeof(server));
     struct sockaddr_in serv_addr;
+    int option = 1;
 
     if (NULL == s)
         perror("malloc");
 
     s->n_children = n_children;
 
-    if ((s->pids = (pid_t*)malloc(n_children * sizeof(pid_t))) == NULL) {
-        perror("malloc pids");
-        free(s);
-        return NULL;
-    }
+    if (s->n_children) {
+        if ((s->pids = (pid_t*)malloc(n_children * sizeof(pid_t))) == NULL) {
+            perror("malloc pids");
+            free(s);
+            return NULL;
+        }
 
-    memset(s->pids, 0, n_children * sizeof(pid_t));
+        memset(s->pids, 0, n_children*sizeof(pid_t));
+    }
 
     if ((s->sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket");
         return NULL;
+    }
+
+    if (setsockopt(s->sockfd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) < 0) {
+        perror("setsockopt");
+    }
+
+    if (setsockopt(s->sockfd, SOL_SOCKET, SO_REUSEPORT, &option, sizeof(option)) < 0) {
+        perror("setsockopt");
     }
 
     memset(&serv_addr, 0, sizeof(struct sockaddr_in));
@@ -228,16 +242,25 @@ int server_start(server* s) {
 
 int server_stop(server* s) {
     int i;
-    int n_children = s->n_children;
+    int n_children = 0;
     int status;
+
     for (i = 0; i < s->n_children; i++) {
+        if (s->pids[i] == 0) {
+            continue;
+        }
         debug("Killing PID %d\n", s->pids[i]);
-        int ret = kill(s->pids[i], SIGTERM);
+        n_children++;
+        int ret = kill(s->pids[i], SIGINT);
         if (ret < 0)
             perror("kill");
     }
 
+    if (!n_children)
+        return 0;
+
     while (n_children) {
+        debug("Waiting %d [%d]\n", n_children, getpid());
         pid_t res = wait(&status);
         if (res < 0) {
             perror("wait");
@@ -251,9 +274,12 @@ int server_stop(server* s) {
 
 int server_destroy(server* s) {
     close(s->sockfd);
-    if (s->pids)
+    if (s->pids) {
         free(s->pids);
+        s->pids = NULL;
+    }
     free(s);
+    debug("Destroy... [%d]\n", getpid());
     return 0;
 }
 
