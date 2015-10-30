@@ -13,7 +13,7 @@
 
 #define BACKLOG 20
 #define DEBUG 1
-#define DEBUG_HTTP 0
+#define DEBUG_HTTP 1
 #define DEBUG_SYSCALL 0
 
 #if DEBUG
@@ -39,6 +39,37 @@ static int quit = 0;
 
 KHASH_MAP_INIT_STR(env, char*)
 
+static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, int vlen) {
+    char *key, *value;
+    int ret;
+    khint_t iter;
+
+    key = (char*)malloc(klen + 1);
+    value = (char*)malloc(vlen + 1);
+    if (NULL == key || NULL == value) {
+        if (key) {
+            free(key);
+        }
+        if (value) {
+            free(value);
+        }
+        return -1;
+    }
+    strncpy(key, k, klen);
+    strncpy(value, v, vlen);
+    key[klen] = '\0';
+    value[vlen] = '\0';
+
+    iter = kh_put(env, env, key, &ret);
+    if (ret < 0) {
+        free(key);
+        free(value);
+        return ret;
+    }
+    kh_value(env, iter) = value;
+    return ret;
+}
+
 static int parse_request(int sockfd) {
     int i;
     int result = 0;
@@ -47,7 +78,7 @@ static int parse_request(int sockfd) {
     struct phr_header headers[100];
     size_t buflen = 0, prevbuflen = 0, method_len, path_len, num_headers;
     ssize_t rret;
-    khash_t(env) *h = kh_init(env);
+    khash_t(env) *env = kh_init(env);
 
     while (1) {
         debug_syscall("read\n");
@@ -96,42 +127,20 @@ static int parse_request(int sockfd) {
     debug_http("path is %.*s\n", (int)path_len, path);
     debug_http("HTTP version is 1.%d\n", minor_version);
     debug_http("headers:\n");
-    debug_http("PID: %d\n", getpid());
     for (i = 0; i != num_headers; ++i) {
-        int ret;
-        char *key, *value;
-        khint_t k;
-        key = (char*)malloc(headers[i].name_len + 1);
-        value = (char*)malloc(headers[i].value_len + 1);
-        if (NULL == key || NULL == value) {
-            if (key) {
-                free(key);
-            }
-            if (value) {
-                free(value);
-            }
+        if (env_put(env, headers[i].name, headers[i].name_len,
+              headers[i].value, headers[i].value_len) < 0) {
             continue;
         }
-        strncpy(key, headers[i].name, headers[i].name_len);
-        strncpy(value, headers[i].value, headers[i].value_len);
-        k = kh_put(env, h, key, &ret);
-        if (ret < 0) {
-            free(key);
-            free(value);
-            continue;
-        }
-        kh_value(h, k) = value;
-        /*printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,*/
-        /*(int)headers[i].value_len, headers[i].value);*/
     }
     {
         const char *key, *value;
-        kh_foreach(h, key, value, {
+        kh_foreach(env, key, value, {
+            debug_http("%s:%s\n", key, value);
             free((void*)key);
             free((void*)value);
-            debug_http("%s:%s\n", key, value);\
         });
-        kh_destroy(env, h);
+        kh_destroy(env, env);
     }
 end:
     return result;
