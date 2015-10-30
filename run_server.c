@@ -16,8 +16,15 @@ void sig_handler(int signo) {
     }
 }
 
-int main(void) {
-    server* s = server_new(PORT, N_CHILDREN);
+int main(int argc, char **argv) {
+    int n_children = N_CHILDREN;
+    if (argc > 1) {
+        n_children = atoi(argv[1]);
+    }
+
+    printf("Running with [%d] number of children\n", n_children);
+    server* s = server_new(PORT, n_children);
+
     if (NULL == s) {
         fprintf(stderr, "Error allocating new server\n");
         exit(1);
