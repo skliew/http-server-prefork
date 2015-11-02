@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -I.
-OBJS := server.o run_server.o picohttpparser.o
+OBJS := server.o run_server.o picohttpparser.o sds.o
 
 all: run_server
 
@@ -11,6 +11,9 @@ clean:
 	$(CC) -c $(CFLAGS) $< -o $@
 
 picohttpparser.o: picohttpparser/picohttpparser.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
+sds.o: sds/sds.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 run_server: $(OBJS)
