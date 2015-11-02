@@ -9,6 +9,7 @@
 
 #include "server.h"
 #include "picohttpparser/picohttpparser.h"
+#include "sds/sds.h"
 #include "khash.h"
 
 #define BACKLOG 20
@@ -54,38 +55,35 @@ static int http_response_write(int sockfd, const char* status, khash_t(env) *hea
 static int env_destroy(khash_t(env) *env) {
     const char *key, *value;
     kh_foreach(env, key, value, {
-        free((void*)key);
-        free((void*)value);
+        sdsfree((void*)key);
+        sdsfree((void*)value);
     });
     kh_destroy(env, env);
     return 0;
 }
 
 static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, int vlen) {
-    char *key, *value;
+    sds key, value;
     int ret;
     khint_t iter;
 
-    key = (char*)malloc(klen + 1);
-    value = (char*)malloc(vlen + 1);
+    key = sdsnewlen(k, klen);
+    value = sdsnewlen(v, vlen);
+
     if (NULL == key || NULL == value) {
         if (key) {
-            free(key);
+            sdsfree(key);
         }
         if (value) {
-            free(value);
+            sdsfree(value);
         }
         return -1;
     }
-    strncpy(key, k, klen);
-    strncpy(value, v, vlen);
-    key[klen] = '\0';
-    value[vlen] = '\0';
 
     iter = kh_put(env, env, key, &ret);
     if (ret < 0) {
-        free(key);
-        free(value);
+        sdsfree(key);
+        sdsfree(value);
         return ret;
     }
     kh_value(env, iter) = value;
@@ -159,8 +157,8 @@ static int parse_request(int sockfd) {
         const char *key, *value;
         kh_foreach(env, key, value, {
             debug_http("%s:%s\n", key, value);
-            free((void*)key);
-            free((void*)value);
+            sdsfree((void*)key);
+            sdsfree((void*)value);
         });
         kh_destroy(env, env);
     }
