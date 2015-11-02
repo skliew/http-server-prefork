@@ -40,23 +40,42 @@ static int quit = 0;
 
 KHASH_MAP_INIT_STR(env, char*)
 
-static int http_response_write(int sockfd, const char* status, khash_t(env) *headers, const char* body) {
-    int w_size;
-    /* TODO dummy for now */
-    char * dummy_string = "HTTP/1.1 200\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nOK\r\n";
+#define CHECK_BUF_NOT_NULL(X)\
+    newbuf = X;\
+    if (NULL == newbuf){\
+      goto cleanup;\
+    } else {\
+      buf = newbuf;\
+    }
 
-    w_size = write(sockfd, dummy_string, strlen(dummy_string));
+static int http_response_write(int sockfd, const char* status, khash_t(env) *headers, const char* body) {
+    int w_size = -1;
+    sds buf = sdsempty();
+    sds newbuf;
+    const char *key, *value;
+
+    CHECK_BUF_NOT_NULL(sdscatprintf(buf, "HTTP/1.1 %s\r\n", status));
+    CHECK_BUF_NOT_NULL(sdscat(buf, "Connection: close\r\n"));
+
+    kh_foreach(headers, key, value, {
+        CHECK_BUF_NOT_NULL(sdscatprintf(buf, "%s: %s\r\n", key, value));
+    });
+
+    CHECK_BUF_NOT_NULL(sdscatprintf(buf, "\r\n%s\r\n", body));
+    w_size = write(sockfd, buf, sdslen(buf));
     if (w_size < 0)
         perror("write");
 
+cleanup:
+    sdsfree(buf);
     return w_size;
 }
 
 static int env_destroy(khash_t(env) *env) {
     const char *key, *value;
     kh_foreach(env, key, value, {
-        sdsfree((void*)key);
-        sdsfree((void*)value);
+        sdsfree((sds)key);
+        sdsfree((sds)value);
     });
     kh_destroy(env, env);
     return 0;
@@ -157,8 +176,8 @@ static int parse_request(int sockfd) {
         const char *key, *value;
         kh_foreach(env, key, value, {
             debug_http("%s:%s\n", key, value);
-            sdsfree((void*)key);
-            sdsfree((void*)value);
+            sdsfree((sds)key);
+            sdsfree((sds)value);
         });
         kh_destroy(env, env);
     }
