@@ -39,6 +39,28 @@ static int quit = 0;
 
 KHASH_MAP_INIT_STR(env, char*)
 
+static int http_response_write(int sockfd, const char* status, khash_t(env) *headers, const char* body) {
+    int w_size;
+    /* TODO dummy for now */
+    char * dummy_string = "HTTP/1.1 200\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nOK\r\n";
+
+    w_size = write(sockfd, dummy_string, strlen(dummy_string));
+    if (w_size < 0)
+        perror("write");
+
+    return w_size;
+}
+
+static int env_destroy(khash_t(env) *env) {
+    const char *key, *value;
+    kh_foreach(env, key, value, {
+        free((void*)key);
+        free((void*)value);
+    });
+    kh_destroy(env, env);
+    return 0;
+}
+
 static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, int vlen) {
     char *key, *value;
     int ret;
@@ -158,9 +180,8 @@ static int child_run(server* s) {
     struct sockaddr addr;
     socklen_t addr_len = sizeof(addr);
     int newsockfd;
-    int w_size;
     struct sigaction action;
-    char * dummy_out = "<html><body><h1>OK</h1></body></html>";
+    khash_t(env) *dummy_response_headers;
 
     memset(&action, 0, sizeof(action));
     action.sa_handler = sig_handler;
@@ -185,12 +206,15 @@ static int child_run(server* s) {
         debug_syscall("accept done\n");
         parse_request(newsockfd);
 
-        /* DUMMY data */
-        debug_syscall("write\n");
-        w_size = write(newsockfd, dummy_out, strlen(dummy_out));
-        debug_syscall("write done\n");
-        if (w_size < 0)
-            perror("write");
+        dummy_response_headers = kh_init(env);
+        env_put(dummy_response_headers, "Content-Type", strlen("Content-Type"), "text/plain", strlen("text/plain"));
+        http_response_write(
+            newsockfd,
+            "200",
+            dummy_response_headers,
+            "OK"
+        );
+        env_destroy(dummy_response_headers);
 
         close(newsockfd);
     }
