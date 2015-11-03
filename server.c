@@ -81,6 +81,8 @@ static int env_destroy(khash_t(env) *env) {
     return 0;
 }
 
+#define STR_N_STRLEN(s) s, strlen(s)
+
 static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, int vlen) {
     sds key, value;
     int ret;
@@ -111,16 +113,18 @@ static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, in
 
 static khash_t(env)* parse_request(int sockfd) {
     int i;
-    char buf[4096], *method, *path;
+    char parser_buf[4096], *method, *path;
     int pret, minor_version;
     struct phr_header headers[100];
     size_t buflen = 0, prevbuflen = 0, method_len, path_len, num_headers;
     ssize_t rret;
+    sds header_key, header_value;
+    sds buf, newbuf;
     khash_t(env) *env = kh_init(env);
 
     while (1) {
         debug_syscall("read\n");
-        while ((rret = read(sockfd, buf+buflen, sizeof(buf) - buflen)) == -1
+        while ((rret = read(sockfd, parser_buf+buflen, sizeof(parser_buf) - buflen)) == -1
             && errno == EINTR);
         debug_syscall("read done\n");
 
@@ -142,7 +146,7 @@ static khash_t(env)* parse_request(int sockfd) {
         buflen += rret;
         /* parse the request */
         num_headers = sizeof(headers) / sizeof(headers[0]);
-        pret = phr_parse_request(buf, buflen, (const char **)&method, &method_len, (const char**)&path, &path_len,
+        pret = phr_parse_request(parser_buf, buflen, (const char **)&method, &method_len, (const char**)&path, &path_len,
             &minor_version, headers, &num_headers, prevbuflen);
         if (pret > 0)
             break; /* successfully parsed the request */
@@ -151,27 +155,35 @@ static khash_t(env)* parse_request(int sockfd) {
         }
         /* request is incomplete, continue the loop */
         /*assert(pret == -2);*/
-        if (buflen == sizeof(buf)) {
+        if (buflen == sizeof(parser_buf)) {
             goto cleanup;
         }
     }
 
-    debug_http("request is %d bytes long\n", pret);
-    debug_http("method is %.*s\n", (int)method_len, method);
-    debug_http("path is %.*s\n", (int)path_len, path);
-    debug_http("HTTP version is 1.%d\n", minor_version);
-    debug_http("headers:\n");
+    if (env_put(env, STR_N_STRLEN("REQUEST_METHOD"), method, method_len) < 0) goto cleanup;
+    if (env_put(env, STR_N_STRLEN("PATH_INFO"), path, path_len) < 0) goto cleanup;
     for (i = 0; i != num_headers; ++i) {
-        if (env_put(env, headers[i].name, headers[i].name_len,
-              headers[i].value, headers[i].value_len) < 0) {
-            continue;
+        buf = newbuf = NULL;
+        buf = sdsnew("HTTP_");
+        CHECK_BUF_NOT_NULL(sdscatlen(buf, headers[i].name, headers[i].name_len));
+        header_key = buf;
+        CHECK_BUF_NOT_NULL(sdsnewlen(headers[i].value, headers[i].value_len));
+        header_value = buf;
+        if (env_put(env, header_key, sdslen(header_key), header_value, sdslen(header_value)) < 0) {
+            fprintf(stderr, "[Warning] error populating headers\n");
         }
+        sdsfree(header_key);
+        sdsfree(header_value);
     }
     return env;
 cleanup:
     if (env) {
         env_destroy(env);
     }
+    if (buf)
+        sdsfree(buf);
+    if (newbuf)
+        sdsfree(newbuf);
     return NULL;
 }
 
@@ -188,6 +200,7 @@ static int child_run(server* s) {
     socklen_t addr_len = sizeof(addr);
     int newsockfd;
     struct sigaction action;
+    const char *key, *value;
     khash_t(env) *dummy_response_headers;
     khash_t(env) *env = NULL;
 
@@ -227,6 +240,9 @@ static int child_run(server* s) {
             "OK"
         );
         env_destroy(dummy_response_headers);
+        kh_foreach(env, key, value, {
+            debug_http("%s: %s\n", key, value);
+        });
         env_destroy(env);
 
         close(newsockfd);
