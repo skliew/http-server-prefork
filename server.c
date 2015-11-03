@@ -48,6 +48,18 @@ KHASH_MAP_INIT_STR(env, char*)
       buf = newbuf;\
     }
 
+static void convert_header_name(const char* header, size_t size) {
+    size_t i = 0;
+    char *c = (char *)header;
+    while (i < size) {
+        if (*c >= 'a' && *c <= 'z')
+            *c &= ~0x20;
+        else if (*c == '-')
+            *c = '_';
+        c++; i++;
+    }
+}
+
 static int http_response_write(int sockfd, const char* status, khash_t(env) *headers, const char* body) {
     int w_size = -1;
     sds buf = sdsempty();
@@ -165,6 +177,8 @@ static khash_t(env)* parse_request(int sockfd) {
     for (i = 0; i != num_headers; ++i) {
         buf = newbuf = NULL;
         buf = sdsnew("HTTP_");
+        /* convert headers in place */
+        convert_header_name(headers[i].name, headers[i].name_len);
         CHECK_BUF_NOT_NULL(sdscatlen(buf, headers[i].name, headers[i].name_len));
         header_key = buf;
         CHECK_BUF_NOT_NULL(sdsnewlen(headers[i].value, headers[i].value_len));
