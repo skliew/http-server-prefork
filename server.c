@@ -109,9 +109,8 @@ static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, in
     return ret;
 }
 
-static int parse_request(int sockfd) {
+static khash_t(env)* parse_request(int sockfd) {
     int i;
-    int result = 0;
     char buf[4096], *method, *path;
     int pret, minor_version;
     struct phr_header headers[100];
@@ -126,19 +125,17 @@ static int parse_request(int sockfd) {
         debug_syscall("read done\n");
 
         if (quit) {
-            goto end;
+            goto cleanup;
         }
 
         if (rret < 0) {
             perror("read");
-            result = -1;
-            goto end;
+            goto cleanup;
         }
 
         if (rret == 0) {
             /* EOF? */
-            result = -1;
-            goto end;
+            goto cleanup;
         }
 
         prevbuflen = buflen;
@@ -150,14 +147,12 @@ static int parse_request(int sockfd) {
         if (pret > 0)
             break; /* successfully parsed the request */
         else if (pret == -1) {
-            result = -1;
-            goto end;
+            goto cleanup;
         }
         /* request is incomplete, continue the loop */
         /*assert(pret == -2);*/
         if (buflen == sizeof(buf)) {
-            result = -1;
-            goto end;
+            goto cleanup;
         }
     }
 
@@ -172,17 +167,12 @@ static int parse_request(int sockfd) {
             continue;
         }
     }
-    {
-        const char *key, *value;
-        kh_foreach(env, key, value, {
-            debug_http("%s:%s\n", key, value);
-            sdsfree((sds)key);
-            sdsfree((sds)value);
-        });
-        kh_destroy(env, env);
+    return env;
+cleanup:
+    if (env) {
+        env_destroy(env);
     }
-end:
-    return result;
+    return NULL;
 }
 
 static void sig_handler(int signo) {
@@ -199,6 +189,7 @@ static int child_run(server* s) {
     int newsockfd;
     struct sigaction action;
     khash_t(env) *dummy_response_headers;
+    khash_t(env) *env = NULL;
 
     memset(&action, 0, sizeof(action));
     action.sa_handler = sig_handler;
@@ -221,7 +212,11 @@ static int child_run(server* s) {
             continue;
         }
         debug_syscall("accept done\n");
-        parse_request(newsockfd);
+        env = parse_request(newsockfd);
+        if (!env) {
+            fprintf(stderr, "Parse error\n");
+            continue;
+        }
 
         dummy_response_headers = kh_init(env);
         env_put(dummy_response_headers, "Content-Type", strlen("Content-Type"), "text/plain", strlen("text/plain"));
@@ -232,6 +227,7 @@ static int child_run(server* s) {
             "OK"
         );
         env_destroy(dummy_response_headers);
+        env_destroy(env);
 
         close(newsockfd);
     }
