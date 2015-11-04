@@ -123,6 +123,15 @@ static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, in
     return ret;
 }
 
+static size_t find_chr(char * s, size_t len, char c) {
+    size_t i;
+    for(i = 0; i < len; i++, s++) {
+        if (c == *s)
+            break;
+    }
+    return i;
+}
+
 static khash_t(env)* parse_request(int sockfd) {
     int i;
     char parser_buf[4096], *method, *path;
@@ -133,6 +142,7 @@ static khash_t(env)* parse_request(int sockfd) {
     sds header_key, header_value;
     sds buf, newbuf;
     khash_t(env) *env = kh_init(env);
+    size_t c;
 
     while (1) {
         debug_syscall("read\n");
@@ -171,6 +181,14 @@ static khash_t(env)* parse_request(int sockfd) {
             goto cleanup;
         }
     }
+
+    c = find_chr(path, path_len, '?');
+    if (c != path_len) {
+        c++;
+        const char * query_string = path + c;
+        if (env_put(env, STR_N_STRLEN("QUERY_STRING"), query_string, path_len - c) < 0) goto cleanup;
+    }
+
 
     if (env_put(env, STR_N_STRLEN("REQUEST_METHOD"), method, method_len) < 0) goto cleanup;
     if (env_put(env, STR_N_STRLEN("PATH_INFO"), path, path_len) < 0) goto cleanup;
