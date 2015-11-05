@@ -144,6 +144,8 @@ static khash_t(env)* parse_request(int sockfd) {
     khash_t(env) *env = kh_init(env);
     size_t c;
 
+    debug("sockfd: %d\n", sockfd);
+
     while (1) {
         debug_syscall("read\n");
         while ((rret = read(sockfd, parser_buf+buflen, sizeof(parser_buf) - buflen)) == -1
@@ -189,9 +191,9 @@ static khash_t(env)* parse_request(int sockfd) {
         if (env_put(env, STR_N_STRLEN("QUERY_STRING"), query_string, path_len - c) < 0) goto cleanup;
     }
 
-
     if (env_put(env, STR_N_STRLEN("REQUEST_METHOD"), method, method_len) < 0) goto cleanup;
     if (env_put(env, STR_N_STRLEN("PATH_INFO"), path, path_len) < 0) goto cleanup;
+    if (env_put(env, STR_N_STRLEN("crack.input"), (char *)&sockfd, sizeof(sockfd)) < 0) goto cleanup;
     for (i = 0; i != num_headers; ++i) {
         buf = newbuf = NULL;
         buf = sdsnew("HTTP_");
@@ -261,6 +263,14 @@ static int child_run(server* s) {
         if (!env) {
             fprintf(stderr, "Parse error\n");
             continue;
+        }
+        {
+            khint_t k = kh_get(env, env, "crack.input");
+            if (k != kh_end(env) && kh_exist(env, k)) {
+                char * v = kh_val(env, k);
+                int * sfd = (int*) v;
+                debug("Getting crack.input: %d\n", *sfd);
+            }
         }
 
         dummy_response_headers = kh_init(env);
