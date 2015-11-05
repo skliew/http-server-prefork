@@ -273,9 +273,51 @@ static int child_run(server* s) {
             fprintf(stderr, "Parse error\n");
             continue;
         }
+
         {
-            int * sfd = (int*) env_get(env, "crack.input");
-            debug("Getting crack.input: %d\n", *sfd);
+            char * content_length = env_get(env, "HTTP_CONTENT_LENGTH");
+            if (NULL != content_length) {
+                debug("Content-Length: %s\n", content_length);
+                unsigned long length = strtoul(content_length, NULL, 10);
+                if (length == ULONG_MAX) {
+                    perror("strtoul");
+                } else if (!length) {
+                    fprintf(stderr, "No valid conversion could be performed\n");
+                } else {
+                    int * sfd = (int*) env_get(env, "crack.input");
+                    if (sfd) {
+                        unsigned long count = length;
+                        char buf[1048];
+                        char printbuf[1049];
+                        ssize_t rret;
+                        debug("Getting crack.input: %d\n", *sfd);
+                        debug("Content-Length: %lu\n", length);
+                        while (1) {
+                            if (count == 0) {
+                                break;
+                            }
+                            while ((rret = read(*sfd, buf, sizeof(buf))) == -1
+                                && errno == EINTR);
+                            if (quit) {
+                                break;
+                            }
+
+                            if (rret < 0) {
+                                perror("read");
+                            }
+
+                            if (rret == 0) {
+                                break;
+                            }
+                            strncpy(printbuf, buf, 1048);
+                            printbuf[rret] = '\0';
+
+                            debug("%s\n", printbuf);
+                            count -= rret;
+                        }
+                    }
+                }
+            }
         }
 
         dummy_response_headers = kh_init(env);
