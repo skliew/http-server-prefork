@@ -93,6 +93,15 @@ static int env_destroy(khash_t(env) *env) {
     return 0;
 }
 
+static char * env_get(khash_t(env) *env, const char* key) {
+    char * result = NULL;
+    khint_t k = kh_get(env, env, "crack.input");
+    if (k != kh_end(env) && kh_exist(env, k)) {
+        result = kh_val(env, k);
+    }
+    return result;
+}
+
 #define STR_N_STRLEN(s) s, strlen(s)
 
 static int env_put(khash_t(env) *env, const char* k, int klen, const char* v, int vlen) {
@@ -265,12 +274,8 @@ static int child_run(server* s) {
             continue;
         }
         {
-            khint_t k = kh_get(env, env, "crack.input");
-            if (k != kh_end(env) && kh_exist(env, k)) {
-                char * v = kh_val(env, k);
-                int * sfd = (int*) v;
-                debug("Getting crack.input: %d\n", *sfd);
-            }
+            int * sfd = (int*) env_get(env, "crack.input");
+            debug("Getting crack.input: %d\n", *sfd);
         }
 
         dummy_response_headers = kh_init(env);
