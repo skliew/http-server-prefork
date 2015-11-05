@@ -95,7 +95,7 @@ static int env_destroy(khash_t(env) *env) {
 
 static char * env_get(khash_t(env) *env, const char* key) {
     char * result = NULL;
-    khint_t k = kh_get(env, env, "crack.input");
+    khint_t k = kh_get(env, env, key);
     if (k != kh_end(env) && kh_exist(env, k)) {
         result = kh_val(env, k);
     }
